@@ -1,0 +1,748 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Circles</title>
+    <style>
+        body, html { margin:0; padding:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background:#f6f7f9; color:#222; height:100%; }
+        header { height:56px; background:#fff; border-bottom:1px solid #e5e7eb; display:flex; align-items:center; padding:0 16px; }
+        header .title { font-weight:600; color:#0f5bd5; }
+        main { display:flex; height:calc(100% - 56px); }
+        .left { width:clamp(300px, 28vw, 420px); background:#fff; border-right:1px solid #e5e7eb; padding:12px; box-sizing:border-box; overflow:auto; }
+        .right { flex:1; display:flex; flex-direction:column; min-width:0; }
+        .toolbar { background:#fff; border-bottom:1px solid #e5e7eb; padding:8px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+        .canvas-wrap { position:relative; flex:1; background:#fafafa; display:flex; align-items:center; justify-content:center; }
+        canvas { background:#fff; box-shadow:0 2px 8px rgba(0,0,0,0.08); }
+        .variation-overlay { position:absolute; left:50%; top:50%; transform: translate(-50%, -50%); display:none; box-shadow:0 2px 8px rgba(0,0,0,0.25); border:1px solid #e5e7eb; background:#fff; }
+        .thumbs { display:flex; flex-wrap:wrap; gap:6px; }
+        .thumb { border:1px solid #e5e7eb; border-radius:4px; overflow:hidden; background:#fff; display:inline-flex; flex-direction:column; align-items:center; padding:4px; }
+        .thumb img { width:120px; height:120px; object-fit:cover; display:block; }
+        .thumb label { font-size:11px; color:#374151; margin-top:4px; }
+        button, select, input[type="text"], input[type="color"] { padding:6px 10px; border:1px solid #d1d5db; border-radius:6px; background:#fff; font-size:14px; transition: all 120ms ease; }
+        button.primary { background:#0f5bd5; border-color:#0f5bd5; color:#fff; }
+        button:hover { filter: brightness(0.95); transform: scale(1.02); }
+        button:active { transform: scale(0.99); }
+        .section { margin-bottom:12px; }
+        .label { font-size:12px; color:#6b7280; margin-bottom:4px; }
+        .log { white-space:pre-wrap; background:#0b1020; color:#d1ecff; padding:10px; border-radius:6px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; height:200px; overflow:auto; }
+        .row { display:flex; gap:6px; align-items:center; }
+        /* polish */
+        #modelSelect { width:100%; }
+        #saturation { flex: 1 1 auto; }
+        #saturationVal { min-width:38px; text-align:right; }
+
+        @media (max-width: 900px){
+            main { flex-direction: column; }
+            .left { width:100%; max-height:40vh; }
+            .right { flex:1; }
+            .toolbar { gap:6px; }
+            .canvas-wrap { height:60vh; }
+        }
+    </style>
+    <script>
+        // Simple hex color with alpha utility for ghost fill
+        function hexToRgba(hex, alpha){
+            try{
+                const ctx = document.createElement('canvas').getContext('2d');
+                ctx.fillStyle = hex;
+                const computed = ctx.fillStyle;
+                const d = document.createElement('div');
+                d.style.color = computed;
+                document.body.appendChild(d);
+                const rgb = getComputedStyle(d).color; // rgb(r, g, b)
+                document.body.removeChild(d);
+                const m = rgb.match(/(\d+),\s*(\d+),\s*(\d+)/);
+                if(!m) return `rgba(255,255,255,${alpha})`;
+                return `rgba(${m[1]},${m[2]},${m[3]},${alpha})`;
+            }catch(e){
+                return `rgba(255,255,255,${alpha})`;
+            }
+        }
+        // Color helpers for saturation adjustment (HSV)
+        function parseCssColorToRgb(css){
+            try{
+                const d = document.createElement('div');
+                d.style.color = css; document.body.appendChild(d);
+                const rgb = getComputedStyle(d).color; document.body.removeChild(d);
+                const m = rgb.match(/(\d+),\s*(\d+),\s*(\d+)/);
+                if(!m) return {r:255,g:255,b:255};
+                return { r: Number(m[1]), g: Number(m[2]), b: Number(m[3]) };
+            }catch(e){ return {r:255,g:255,b:255}; }
+        }
+        function rgbToHsv(r,g,b){
+            r/=255; g/=255; b/=255;
+            const max = Math.max(r,g,b), min = Math.min(r,g,b);
+            const d = max - min;
+            let h = 0;
+            if(d!==0){
+                switch(max){
+                    case r: h = ((g-b)/d + (g<b?6:0)); break;
+                    case g: h = ((b-r)/d + 2); break;
+                    case b: h = ((r-g)/d + 4); break;
+                }
+                h/=6;
+            }
+            const s = max===0?0:d/max;
+            const v = max;
+            return {h,s,v};
+        }
+        function hsvToRgb(h,s,v){
+            let r,g,b;
+            const i = Math.floor(h*6);
+            const f = h*6 - i;
+            const p = v*(1-s), q = v*(1-f*s), t = v*(1-(1-f)*s);
+            switch(i%6){
+                case 0: r=v; g=t; b=p; break;
+                case 1: r=q; g=v; b=p; break;
+                case 2: r=p; g=v; b=t; break;
+                case 3: r=p; g=q; b=v; break;
+                case 4: r=t; g=p; b=v; break;
+                case 5: r=v; g=p; b=q; break;
+            }
+            return { r: Math.round(r*255), g: Math.round(g*255), b: Math.round(b*255) };
+        }
+        function applySaturationToCss(css, saturationPercent){
+            const {r,g,b} = parseCssColorToRgb(css);
+            const {h,s,v} = rgbToHsv(r,g,b);
+            const s2 = Math.max(0, Math.min(1, (Number(saturationPercent)||0)/100)) * s;
+            const {r:rr,g:rg,b:rb} = hsvToRgb(h, s2, v);
+            return `rgb(${rr}, ${rg}, ${rb})`;
+        }
+        // debounce helper
+        function debounce(fn, wait){ let t; return (...args)=>{ clearTimeout(t); t = setTimeout(()=>fn.apply(null, args), wait); }; }
+    </script>
+    </head>
+<body>
+    <header>
+        <div class="title">Circles</div>
+    </header>
+    <main>
+        <aside class="left" style="display:none">
+            <div class="section">
+                <div class="label">Session</div>
+                <div class="row">
+                    <button id="startSessionBtn" class="primary">Start Session</button>
+                    <span id="sessionId" style="font-size:12px;color:#374151;"></span>
+                </div>
+            </div>
+            <div class="section">
+                <div class="label">AI Model</div>
+                <select id="modelSelect"></select>
+            </div>
+            <div class="section">
+                <div class="label">Global Saturation (%)</div>
+                <div class="row" style="gap:8px; align-items:center;">
+                    <input type="range" id="saturation" min="0" max="100" step="1" value="100"/>
+                    <span id="saturationVal" style="font-size:12px;width:38px;text-align:right;">100</span>
+                </div>
+            </div>
+            <div class="section" id="initialCirclePanel" style="display:none;">
+                <div class="label">Initial Circle (drag on canvas to place)</div>
+                <div class="row" style="gap:8px; align-items:center;">
+                    <span style="width:80px;font-size:12px;color:#6b7280;">Radius</span>
+                    <input type="range" id="initRadius" min="0.5" max="15" step="0.25" value="5"/>
+                    <span id="initRadiusVal" style="font-size:12px;width:40px;text-align:right;">5.0</span>
+                </div>
+                <div class="row" style="gap:8px; align-items:center; margin-top:6px;">
+                    <span style="width:80px;font-size:12px;color:#6b7280;">Fill</span>
+                    <input type="color" id="initFill" value="#f2f2f2"/>
+                </div>
+                <div class="row" style="margin-top:6px; flex-wrap:wrap; gap:8px;">
+                    <button id="commitInitialCircle" class="primary">Place Initial Circle</button>
+                </div>
+            </div>
+            <!-- Pattern panel removed -->
+            <div class="section" id="connectorPanel" style="display:none;">
+                <div class="label">Connector</div>
+                <div class="row" style="gap:8px; align-items:center; margin-bottom:6px;">
+                    <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#374151;">
+                        <input type="checkbox" id="connectorEnabled" checked /> Enabled
+                    </label>
+                </div>
+                <div class="row" style="gap:8px; align-items:center; margin-bottom:6px;">
+                    <span style="width:80px;font-size:12px;color:#6b7280;">Length (m)</span>
+                    <input type="number" id="connectorLength" min="0.1" max="10" step="0.1" value="2.0"/>
+                </div>
+                <div class="row" style="gap:8px; align-items:center; margin-bottom:6px;">
+                    <span style="width:80px;font-size:12px;color:#6b7280;">Width (m)</span>
+                    <input type="number" id="connectorWidth" min="0.1" max="10" step="0.1" value="0.5"/>
+                </div>
+                <div class="row" style="gap:8px; align-items:center;">
+                    <span style="width:80px;font-size:12px;color:#6b7280;">Fill</span>
+                    <input type="color" id="connectorFill" value="#ffffff"/>
+                </div>
+                <div class="row" style="gap:8px; align-items:center; margin-top:6px;">
+                    <span style="width:80px;font-size:12px;color:#6b7280;">Type</span>
+                    <select id="connectorType" style="flex:1 1 auto;"></select>
+                </div>
+                <div class="row" style="margin-top:6px;">
+                    <button id="saveConnector" class="primary">Save Connector</button>
+                </div>
+            </div>
+            <!-- Variations side panel removed; previews will show in-canvas only -->
+            <!-- Controls removed in auto-only mode -->
+        </aside>
+        <section class="right">
+            <div class="toolbar">
+                <span id="status">Idle</span>
+                <span style="flex:1"></span>
+                <button id="autoRunBtn" class="primary">Auto Run</button>
+                <button id="stopBtn">Stop</button>
+            </div>
+            <div class="canvas-wrap">
+                <canvas id="canvas" width="1024" height="1024"></canvas>
+                <img id="variationOverlay" class="variation-overlay" />
+            </div>
+        </section>
+    </main>
+
+    <script>
+        const api = {
+            models: async () => (await fetch('/api/ai/models')).json(),
+            startSession: async () => (await fetch('/api/session/start', { method:'POST' })).json(),
+            getState: async (sid) => (await fetch(`/api/session/state/${encodeURIComponent(sid)}`)).json(),
+            getHistory: async (sid) => (await fetch(`/api/session/history/${encodeURIComponent(sid)}`)).json(),
+            applyActions: async (payload) => (await fetch('/api/session/apply_actions', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) })).json(),
+            aiStep: async (payload) => (await fetch('/api/session/ai_step', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) })).json(),
+            varStart: async (payload) => (await fetch('/api/session/variations/start', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) })).json(),
+            varNext: async (payload) => (await fetch('/api/session/variations/next', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) })).json(),
+            varStatus: async (sid) => (await fetch(`/api/session/variations/status?session_id=${encodeURIComponent(sid)}`)).json(),
+            varAutoChoose: async (payload) => (await fetch('/api/session/variations/auto_choose', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) })).json(),
+        };
+
+        const ui = {
+            startSessionBtn: document.getElementById('startSessionBtn'),
+            sessionId: document.getElementById('sessionId'),
+            modelSelect: document.getElementById('modelSelect'),
+            commitInitialCircle: document.getElementById('commitInitialCircle'),
+            aiStepBtn: document.getElementById('aiStepBtn'),
+            historyBox: document.getElementById('historyBox'),
+            status: document.getElementById('status'),
+            refreshBtn: document.getElementById('refreshBtn'),
+            canvas: document.getElementById('canvas'),
+            selectMode: null,
+            autoRunBtn: document.getElementById('autoRunBtn'),
+            stopBtn: document.getElementById('stopBtn'),
+            initialCirclePanel: document.getElementById('initialCirclePanel'),
+            initRadius: document.getElementById('initRadius'),
+            initRadiusVal: document.getElementById('initRadiusVal'),
+            initFill: document.getElementById('initFill'),
+            saturation: document.getElementById('saturation'),
+            saturationVal: document.getElementById('saturationVal'),
+            connectorPanel: document.getElementById('connectorPanel'),
+            connectorEnabled: document.getElementById('connectorEnabled'),
+            connectorLength: document.getElementById('connectorLength'),
+            connectorWidth: document.getElementById('connectorWidth'),
+            connectorFill: document.getElementById('connectorFill'),
+            saveConnector: document.getElementById('saveConnector'),
+            connectorType: document.getElementById('connectorType'),
+            deleteBtn: document.getElementById('deleteBtn'),
+            patternPanel: document.getElementById('patternPanel'),
+            patternSelect: document.getElementById('patternSelect'),
+            patternRadius: document.getElementById('patternRadius'),
+            patternStartDeg: document.getElementById('patternStartDeg'),
+            runPatternBtn: document.getElementById('runPatternBtn'),
+            varNum: document.getElementById('varNum'),
+            variationOverlay: document.getElementById('variationOverlay'),
+        };
+
+        function status(msg){ ui.status.textContent = msg; }
+
+        // Image caches for overlays
+        const circleTypeImgs = {}; // name -> HTMLImageElement
+        const connectorTypeImgs = {}; // name -> HTMLImageElement
+        let availableCircleTypes = [];
+        let availableConnectorTypes = [];
+        function loadTypeImage(cache, basePath, name){
+            if(!name) return null;
+            if(cache[name]) return cache[name];
+            const img = new Image();
+            img.src = `${basePath}/${encodeURIComponent(name)}.png`;
+            img.onload = ()=>{ try{ draw(); }catch(e){} };
+            cache[name] = img;
+            return img;
+        }
+
+        let sessionId = null;
+        let currentState = null;
+        let GRID_SIZE = 50;
+        let drag = { active:false, type:null, id:null, offset:[0,0] };
+
+        function cellSize(){ return ui.canvas.width / GRID_SIZE; }
+        function gridToPx(x, y){ const cs = cellSize(); return [ x*cs, (GRID_SIZE - y)*cs ]; }
+        function pxToGrid(px, py){ const cs = cellSize(); return [ px/cs, GRID_SIZE - (py/cs) ]; }
+
+        let selected = null; // {type:'circle'|'text', id}
+        let placingInitial = { active:false, x:15, y:15 };
+
+        function draw(){
+            const ctx = ui.canvas.getContext('2d');
+            ctx.clearRect(0,0,ui.canvas.width, ui.canvas.height);
+            // grid
+            ctx.strokeStyle = '#e5e7eb';
+            ctx.lineWidth = 1;
+            const cs = cellSize();
+            for(let i=0;i<=GRID_SIZE;i++){
+                const p = i*cs;
+                ctx.beginPath(); ctx.moveTo(p,0); ctx.lineTo(p,ui.canvas.height); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(0,p); ctx.lineTo(ui.canvas.width,p); ctx.stroke();
+            }
+            if(!currentState) return;
+            const els = currentState.elements || [];
+            const options = currentState.options || { saturation: 100, connector: { enabled:true, width:2, height:2, fill_color:'#ffffff' } };
+            const sat = Number(options.saturation ?? 100);
+            // circles with interleaved connectors for correct z-index
+            const circles = els.filter(e=>e.type==='circle');
+            circles.forEach((c, j)=>{
+                const [cx,cy] = gridToPx(c.x, c.y);
+                const r = Math.max(5, cs*(c.radius ?? 5.0));
+                // fill
+                try{ ctx.fillStyle = applySaturationToCss(c.fill_color || '#ffffff', sat); }catch(e){ ctx.fillStyle = '#ffffff'; }
+                ctx.strokeStyle = '#0078ff';
+                ctx.lineWidth = Math.max(2, cs/20);
+                ctx.save();
+                ctx.shadowColor = 'rgba(0,0,0,0.2)';
+                ctx.shadowBlur = Math.max(2, cs*0.2);
+                ctx.shadowOffsetX = Math.max(1, cs*0.05);
+                ctx.shadowOffsetY = Math.max(1, cs*0.05);
+                ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill();
+                ctx.restore();
+                ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.stroke();
+                // overlay circle image (clip to circle)
+                try{
+                    const name = (c.circle_type && String(c.circle_type).trim()) || '';
+                    if(name){
+                        const img = loadTypeImage(circleTypeImgs, '/assets/circle-types', name);
+                        if(img && img.complete){
+                            ctx.save();
+                            ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.clip();
+                            ctx.translate(cx, cy);
+                            const rotCW = Number(c.rotation_deg||0);
+                            ctx.rotate(-rotCW * Math.PI/180);
+                            const size = Math.round(r*2);
+                            ctx.drawImage(img, -size/2, -size/2, size, size);
+                            ctx.restore();
+                            ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.stroke();
+                        }
+                    }
+                }catch(e){}
+                // ID
+                ctx.fillStyle = '#111';
+                ctx.font = `${Math.max(10, cs*0.5)}px sans-serif`;
+                ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                const cid = String(c.id||'');
+                if(cid){
+                    ctx.save();
+                    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+                    ctx.fillText(cid, cx+1, cy+1);
+                    ctx.restore();
+                    ctx.fillText(cid, cx, cy);
+                }
+                if(selected && selected.type==='circle' && selected.id===c.id){
+                    ctx.strokeStyle = '#22c55e'; ctx.lineWidth = Math.max(2, cs/20);
+                    ctx.setLineDash([6,4]);
+                    ctx.beginPath(); ctx.arc(cx,cy,r+cs*0.2,0,Math.PI*2); ctx.stroke();
+                    ctx.setLineDash([]);
+                }
+
+                // draw connectors where this later circle touches any earlier circle i<j
+                try{
+                    const conn = options.connector || {};
+                    if(conn.enabled){
+                        const tol = 0.01; // grid units
+                        const length = Number((conn.length_m ?? conn.width) ?? 2.0);
+                        const widthN = Number((conn.width_m ?? conn.height) ?? 2.0);
+                        const fillCss = applySaturationToCss(conn.fill_color || '#ffffff', sat);
+                        ctx.lineWidth = Math.max(2, cs/20);
+                        ctx.strokeStyle = '#0078ff';
+                        for(let i=0;i<j;i++){
+                            const c1 = circles[i];
+                            const x1=c1.x, y1=c1.y, r1=Number(c1.radius||5);
+                            const x2=c.x,  y2=c.y,  r2=Number(c.radius||5);
+                            const dx = x2-x1, dy = y2-y1; const d = Math.hypot(dx, dy);
+                            if(d<=0 || Math.abs(d-(r1+r2))>tol) continue;
+                            const nx = dx/d, ny = dy/d; // normal
+                            const cxg = x1 + nx*r1, cyg = y1 + ny*r1; // contact grid
+                            const ux = -ny, uy = nx; // tangent
+                            const vx = nx, vy = ny; // normal
+                            const hl = length/2, hw = widthN/2;
+                            const p1g = [cxg + ux*hl + vx*hw, cyg + uy*hl + vy*hw];
+                            const p2g = [cxg + ux*hl - vx*hw, cyg + uy*hl - vy*hw];
+                            const p3g = [cxg - ux*hl - vx*hw, cyg - uy*hl - vy*hw];
+                            const p4g = [cxg - ux*hl + vx*hw, cyg - uy*hl + vy*hw];
+                            const p1 = gridToPx(p1g[0], p1g[1]);
+                            const p2 = gridToPx(p2g[0], p2g[1]);
+                            const p3 = gridToPx(p3g[0], p3g[1]);
+                            const p4 = gridToPx(p4g[0], p4g[1]);
+                            ctx.fillStyle = fillCss;
+                            ctx.save();
+                            ctx.shadowColor = 'rgba(0,0,0,0.2)';
+                            ctx.shadowBlur = Math.max(2, cs*0.2);
+                            ctx.shadowOffsetX = Math.max(1, cs*0.05);
+                            ctx.shadowOffsetY = Math.max(1, cs*0.05);
+                            ctx.beginPath();
+                            ctx.moveTo(p1[0], p1[1]); ctx.lineTo(p2[0], p2[1]); ctx.lineTo(p3[0], p3[1]); ctx.lineTo(p4[0], p4[1]);
+                            ctx.closePath(); ctx.fill();
+                            ctx.restore();
+                            // overlay connector texture, clipped to rectangle
+                            try{
+                                const nameC = (conn.type && String(conn.type).trim()) || '';
+                                if(nameC){
+                                    const imgC = loadTypeImage(connectorTypeImgs, '/assets/connector-types', nameC);
+                                    if(imgC && imgC.complete){
+                                        const Lpx = Math.max(1, Math.round(length*cs));
+                                        const Wpx = Math.max(1, Math.round(widthN*cs));
+                                        const off = document.createElement('canvas'); off.width = Lpx; off.height = Wpx;
+                                        const octx = off.getContext('2d');
+                                        // central crop row range from square image
+                                        const cropH = Math.round(imgC.height * (Wpx / Lpx));
+                                        const topSrc = Math.max(0, Math.floor((imgC.height - cropH) / 2));
+                                        octx.drawImage(imgC, 0, topSrc, imgC.width, cropH, 0, 0, Lpx, Wpx);
+                                        const cxp = (p1[0]+p2[0]+p3[0]+p4[0])/4;
+                                        const cyp = (p1[1]+p2[1]+p3[1]+p4[1])/4;
+                                        const uxPx = ux*cs, uyPx = -uy*cs;
+                                        const ang = Math.atan2(uyPx, uxPx);
+                                        ctx.save();
+                                        ctx.beginPath(); ctx.moveTo(p1[0], p1[1]); ctx.lineTo(p2[0], p2[1]); ctx.lineTo(p3[0], p3[1]); ctx.lineTo(p4[0], p4[1]); ctx.closePath(); ctx.clip();
+                                        ctx.translate(cxp, cyp); ctx.rotate(ang);
+                                        ctx.drawImage(off, -Lpx/2, -Wpx/2);
+                                        ctx.restore();
+                                    }
+                                }
+                            }catch(e){}
+                            // only draw the short sides (perpendicular to tangent)
+                            ctx.beginPath(); ctx.moveTo(p1[0], p1[1]); ctx.lineTo(p2[0], p2[1]); ctx.stroke();
+                            ctx.beginPath(); ctx.moveTo(p3[0], p3[1]); ctx.lineTo(p4[0], p4[1]); ctx.stroke();
+                        }
+                    }
+                }catch(e){}
+            });
+            // connectors already interleaved above
+            // initial circle ghost
+            if(sessionId && currentState && !(currentState.elements||[]).some(e=>e.type==='circle') && placingInitial.active){
+                const ctx2 = ctx;
+                const [gx,gy] = gridToPx(placingInitial.x, placingInitial.y);
+                const r = Math.max(5, cs*(Number(ui.initRadius.value)||5.0));
+                ctx2.fillStyle = hexToRgba(ui.initFill.value || '#f2f2f2', 0.35);
+                ctx2.strokeStyle = '#059669'; ctx2.setLineDash([6,4]); ctx2.lineWidth = Math.max(2, cs/20);
+                ctx2.beginPath(); ctx2.arc(gx,gy,r,0,Math.PI*2); ctx2.fill(); ctx2.stroke(); ctx2.setLineDash([]);
+            }
+            // texts
+            els.filter(e=>e.type==='text').forEach(t=>{
+                const [cx,cy] = gridToPx(t.x, t.y);
+                ctx.fillStyle = '#111';
+                ctx.font = `${Math.max(12, cs*0.5)}px sans-serif`;
+                ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                const ttxt = String(t.text||'');
+                ctx.save(); ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillText(ttxt, cx+1, cy+1); ctx.restore();
+                ctx.fillText(ttxt, cx, cy);
+                if(selected && selected.type==='text' && selected.id===t.id){
+                    ctx.strokeStyle = '#22c55e'; ctx.lineWidth = 1; ctx.setLineDash([4,3]);
+                    const m = Math.max(10, cs*0.5);
+                    ctx.strokeRect(cx-m, cy-m, m*2, m*2);
+                    ctx.setLineDash([]);
+                }
+            });
+        }
+
+        function hitTest(px, py){
+            if(!currentState) return null;
+            const cs = cellSize();
+            const els = currentState.elements || [];
+            for(let i=els.length-1;i>=0;i--){
+                const e = els[i];
+                if(e.type==='text'){
+                    const [cx,cy] = gridToPx(e.x,e.y);
+                    const m = Math.max(10, cs*0.5);
+                    if(px>=cx-m && px<=cx+m && py>=cy-m && py<=cy+m) return {type:'text', id:e.id};
+                }
+            }
+            for(let i=els.length-1;i>=0;i--){
+                const e = els[i];
+                if(e.type==='circle'){
+                    const [cx,cy] = gridToPx(e.x,e.y);
+                    const r = Math.max(5, cs*(e.radius ?? 5.0));
+                    if(Math.hypot(px-cx, py-cy) <= r+cs*0.2) return {type:'circle', id:e.id};
+                }
+            }
+            return null;
+        }
+
+        function getSelectedModel(){ return ui.modelSelect.value || ''; }
+
+        async function loadModels(){
+            const data = await api.models();
+            ui.modelSelect.innerHTML = '';
+            (data.models||[]).forEach(m=>{
+                const opt = document.createElement('option');
+                opt.value = m; opt.textContent = m; ui.modelSelect.appendChild(opt);
+            });
+            if(data.default){ ui.modelSelect.value = data.default; }
+            // populate connector types
+            ui.connectorType.innerHTML = '';
+            const empty = document.createElement('option'); empty.value = ''; empty.textContent = '(none)'; ui.connectorType.appendChild(empty);
+            availableCircleTypes = data.circle_types || [];
+            availableConnectorTypes = data.connector_types || [];
+            availableConnectorTypes.forEach(n=>{ const opt = document.createElement('option'); opt.value = n; opt.textContent = n; ui.connectorType.appendChild(opt); });
+        }
+
+        async function refresh(){
+            if(!sessionId) return;
+            currentState = await api.getState(sessionId);
+            if(currentState && typeof currentState.grid_size === 'number'){ GRID_SIZE = currentState.grid_size; }
+            const hist = await api.getHistory(sessionId);
+            ui.historyBox.textContent = hist.text || '';
+            applyOptionControlsFromState();
+            draw();
+        }
+
+        // initial circle UI: live labels
+        function updateInitialLabels(){
+            if(!ui.initialCirclePanel) return;
+            if(ui.initRadiusVal) ui.initRadiusVal.textContent = (Number(ui.initRadius.value)||5).toFixed(2);
+        }
+        function applyOptionControlsFromState(){
+            const opts = (currentState && currentState.options) || {};
+            const conn = opts.connector || {};
+            if(ui.saturation){ ui.saturation.value = String(Math.round(Number(opts.saturation ?? 100))); }
+            if(ui.saturationVal){ ui.saturationVal.textContent = ui.saturation.value; }
+            if(ui.connectorEnabled){ ui.connectorEnabled.checked = Boolean(conn.enabled ?? true); }
+            if(ui.connectorLength){ ui.connectorLength.value = String(Number((conn.length_m ?? conn.width) ?? 2.0)); }
+            if(ui.connectorWidth){ ui.connectorWidth.value = String(Number((conn.width_m ?? conn.height) ?? 2.0)); }
+            if(ui.connectorFill){ ui.connectorFill.value = conn.fill_color || '#ffffff'; }
+            if(ui.connectorType){ ui.connectorType.value = conn.type || ''; }
+        }
+        async function saveOptions(){
+            if(!sessionId) return;
+            const payload = {
+                session_id: sessionId,
+                actions: [
+                    {
+                        type: 'EditOptions',
+                        saturation: Number(ui.saturation?.value)||0,
+                        connector: {
+                            enabled: Boolean(ui.connectorEnabled?.checked),
+                            length_m: Number(ui.connectorLength?.value)||2,
+                            width_m: Number(ui.connectorWidth?.value)||2,
+                            fill_color: ui.connectorFill?.value || '#ffffff',
+                            type: ui.connectorType?.value || ''
+                        }
+                    }
+                ],
+                turn_note: 'update options'
+            };
+            const res = await api.applyActions(payload);
+            if(!res.error){ currentState = res.state; draw(); }
+        }
+        ['input','change'].forEach(evt=>{
+            if(ui.initRadius) ui.initRadius.addEventListener(evt, ()=>{ updateInitialLabels(); draw(); });
+            if(ui.initFill) ui.initFill.addEventListener(evt, ()=>{ draw(); });
+            if(ui.saturation) {
+                const saveOptionsDebounced = debounce(()=> saveOptions(), 200);
+                ui.saturation.addEventListener(evt, ()=>{ if(ui.saturationVal) ui.saturationVal.textContent = ui.saturation.value; saveOptionsDebounced(); });
+            }
+        });
+        if(ui.saveConnector) ui.saveConnector.addEventListener('click', saveOptions);
+        ['input','change'].forEach(evt=>{
+            if(ui.connectorEnabled) ui.connectorEnabled.addEventListener(evt, ()=>{});
+            if(ui.connectorLength) ui.connectorLength.addEventListener(evt, ()=>{});
+            if(ui.connectorWidth) ui.connectorWidth.addEventListener(evt, ()=>{});
+            if(ui.connectorFill) ui.connectorFill.addEventListener(evt, ()=>{});
+        });
+
+        // Auto start session immediately
+        (async ()=>{
+            const res = await api.startSession();
+            sessionId = res.session_id;
+            currentState = res.state;
+            if(currentState && typeof currentState.grid_size === 'number'){ GRID_SIZE = currentState.grid_size; }
+            draw();
+        })();
+
+        if(ui.refreshBtn) ui.refreshBtn.addEventListener('click', refresh);
+
+        // initial placement interactions
+        ui.canvas.addEventListener('mousemove', (ev)=>{
+            if(!placingInitial.active || !sessionId) return;
+            const rect = ui.canvas.getBoundingClientRect(); const px = ev.clientX - rect.left; const py = ev.clientY - rect.top;
+            const [gx,gy] = pxToGrid(px, py);
+            placingInitial.x = Math.max(0, Math.min(GRID_SIZE, gx));
+            placingInitial.y = Math.max(0, Math.min(GRID_SIZE, gy));
+            draw();
+        });
+        async function commitInitial(){
+            if(!placingInitial.active || !sessionId) return;
+            const pos = [placingInitial.x, placingInitial.y];
+            const radius = Number(ui.initRadius.value)||5.0;
+            const fill = ui.initFill.value || '#f2f2f2';
+            const payload = { session_id: sessionId, actions:[{ type:'PlaceCircle', position: pos, circle_radius: radius, fill_color: fill }], turn_note:'initial circle' };
+            const res = await api.applyActions(payload);
+            if(res.error){ alert(res.error); return; }
+            currentState = res.state; draw();
+            const hist = await api.getHistory(sessionId); ui.historyBox.textContent = hist.text || '';
+            placingInitial.active = false; ui.initialCirclePanel.style.display = 'none'; ui.patternPanel.style.display = '';
+            applyOptionControlsFromState();
+        }
+        if(ui.commitInitialCircle) ui.commitInitialCircle.addEventListener('click', commitInitial);
+        if(ui.runPatternBtn) ui.runPatternBtn.addEventListener('click', async ()=>{
+            if(!sessionId || !currentState) return;
+            const circles = (currentState.elements||[]).filter(e=>e.type==='circle');
+            if(circles.length===0){ alert('Place the initial circle first'); return; }
+            const anchorId = circles[circles.length-1].id; // use latest circle
+            const pattern = ui.patternSelect?.value || '';
+            if(!pattern){ alert('Select a pattern first'); return; }
+            const radius = Number(ui.patternRadius?.value)||2.0;
+            const startDeg = Number(ui.patternStartDeg?.value)||0;
+            let action;
+            if(pattern==='floral'){
+                action = { type:'RunPattern', pattern:'floral', anchor_circle: anchorId, count: 8, circle_radius: radius, start_deg: startDeg };
+            } else if(pattern==='fractal_chain'){
+                action = { type:'RunPattern', pattern:'fractal_chain', anchor_circle: anchorId, depth: 6, circle_radius: radius, scale: 0.8, angle_deg: startDeg, delta_deg: 25 };
+            } else if(pattern==='square_ring'){
+                action = { type:'RunPattern', pattern:'square_ring', anchor_circle: anchorId, per_side: 3, circle_radius: radius, start_deg: startDeg };
+            }
+            const res = await api.applyActions({ session_id: sessionId, actions:[ action ], turn_note:'user pattern second step' });
+            if(res.error){ alert(res.error); return; }
+            currentState = res.state; draw();
+            const hist = await api.getHistory(sessionId); ui.historyBox.textContent = hist.text || '';
+            // After running pattern, pattern panel can hide; AI is next option
+            ui.patternPanel.style.display = 'none';
+        });
+        ui.canvas.addEventListener('click', async (ev)=>{
+            if(placingInitial.active && sessionId){ await commitInitial(); }
+        });
+
+        // Selection and dragging (kept dormant unless selectMode exists and is checked)
+        ui.canvas.addEventListener('click', (ev)=>{
+            if(!(ui.selectMode && ui.selectMode.checked) || !currentState) return;
+            const rect = ui.canvas.getBoundingClientRect();
+            const px = ev.clientX - rect.left; const py = ev.clientY - rect.top;
+            selected = hitTest(px, py);
+            draw();
+        });
+        ui.canvas.addEventListener('mousedown', (ev)=>{
+            if(!(ui.selectMode && ui.selectMode.checked) || !currentState) return;
+            const rect = ui.canvas.getBoundingClientRect(); const px = ev.clientX - rect.left; const py = ev.clientY - rect.top;
+            const hit = hitTest(px, py);
+            if(hit){
+                selected = hit; draw();
+                const els = currentState.elements || [];
+                const e = els.find(z=>z.id===hit.id);
+                if(e){ drag.active = true; drag.type = hit.type; drag.id = hit.id; drag.offset = [0,0]; }
+            }
+        });
+        ui.canvas.addEventListener('mousemove', async (ev)=>{
+            if(!drag.active || !currentState) return;
+            const rect = ui.canvas.getBoundingClientRect(); const px = ev.clientX - rect.left; const py = ev.clientY - rect.top;
+            const [gx, gy] = pxToGrid(px, py);
+            const els = currentState.elements || [];
+            const e = els.find(z=>z.id===drag.id);
+            if(!e) return;
+            if(drag.type==='circle' || drag.type==='text'){
+                e.x = Math.max(0, Math.min(GRID_SIZE, gx));
+                e.y = Math.max(0, Math.min(GRID_SIZE, gy));
+            }
+            draw();
+        });
+        ui.canvas.addEventListener('mouseup', async (ev)=>{
+            if(!drag.active || !sessionId || !currentState) return;
+            const els = currentState.elements || [];
+            const e = els.find(z=>z.id===drag.id);
+            drag.active = false;
+            if(!e) return;
+            if(drag.type==='circle'){
+                const payload = { session_id: sessionId, actions: [{ type:'EditCircle', id:e.id, position:[e.x, e.y] }], turn_note:'drag circle' };
+                const res = await api.applyActions(payload); if(!res.error){ currentState = res.state; draw(); }
+            } else if(drag.type==='text'){
+                const payload = { session_id: sessionId, actions: [{ type:'EditText', id:e.id, position:[e.x, e.y] }], turn_note:'drag text' };
+                const res = await api.applyActions(payload); if(!res.error){ currentState = res.state; draw(); }
+            }
+        });
+        ui.canvas.addEventListener('mouseleave', ()=>{ drag.active=false; });
+        // Alt + wheel to change circle radius when selected
+        ui.canvas.addEventListener('wheel', async (ev)=>{
+            if(!(ui.selectMode && ui.selectMode.checked) || !sessionId || !currentState || !selected || selected.type!=='circle') return;
+            if(!ev.altKey) return;
+            ev.preventDefault();
+            const circle = (currentState.elements||[]).find(e=>e.id===selected.id);
+            if(!circle) return;
+            const delta = ev.deltaY < 0 ? 0.25 : -0.25;
+            const next = Math.max(0.5, Math.min(15.0, (circle.radius ?? 5.0) + delta));
+            const payload = { session_id: sessionId, actions: [{ type:'EditCircle', id: circle.id, radius: next }], turn_note:'wheel radius' };
+            const res = await api.applyActions(payload); if(!res.error){ currentState = res.state; draw(); }
+        }, { passive:false });
+
+        // AI controls
+        if(ui.aiStepBtn) ui.aiStepBtn.addEventListener('click', async ()=>{
+            if(!sessionId) return alert('Start a session first');
+            if(!(currentState?.elements||[]).some(e=>e.type==='circle')) return alert('Place the initial circle first');
+            // Variation-driven single-run: start, generate all, auto choose (in-canvas only)
+            const varCount = Number(ui.varNum?.value)||3;
+            status('Variations: starting...');
+            await api.varStart({ session_id: sessionId, model: getSelectedModel(), num: varCount });
+            for(let i=0;i<varCount;i++){
+                const r = await api.varNext({ session_id: sessionId });
+                await showCurrentVariation();
+                if(r && r.done) break;
+            }
+            status('Choosing best...');
+            const chosen = await api.varAutoChoose({ session_id: sessionId });
+            status('Idle');
+            if(chosen && !chosen.error){ currentState = chosen.state; draw(); const hist = await api.getHistory(sessionId); ui.historyBox.textContent = hist.text || ''; }
+            // After choosing first step, continue automatically one more cycle (demonstrates auto progression)
+            if(chosen && !chosen.error){
+                setTimeout(async ()=>{ if(!autoRun) { autoRun = true; await autoTick(); autoRun = false; } }, 200);
+            }
+        });
+
+        let autoRun = false;
+        // default varNum uses backend default when empty; set to 3 if not present
+        if(ui.varNum){ ui.varNum.value = ui.varNum.value || '3'; }
+        async function autoTick(){
+            if(!autoRun) return; if(!sessionId) return;
+            status('AI auto (variations)...');
+            try{
+                const varCount = Number(ui.varNum?.value)||3;
+                await api.varStart({ session_id: sessionId, model: getSelectedModel(), num: varCount });
+                for(let i=0;i<varCount;i++){
+                    const r = await api.varNext({ session_id: sessionId });
+                    await showCurrentVariation();
+                    if(r && r.done) break;
+                }
+                const chosen = await api.varAutoChoose({ session_id: sessionId });
+                if(chosen && !chosen.error){ currentState = chosen.state; draw(); const hist = await api.getHistory(sessionId); ui.historyBox.textContent = hist.text || ''; }
+            }catch(e){}
+            status(autoRun ? 'Auto running' : 'Idle');
+            if(autoRun) setTimeout(autoTick, 500);
+        }
+        ui.autoRunBtn.addEventListener('click', ()=>{ if(!sessionId) return alert('Start a session first'); if(!(currentState?.elements||[]).some(e=>e.type==='circle')) return alert('Place the initial circle first'); if(autoRun) return; autoRun = true; autoTick(); });
+        ui.stopBtn.addEventListener('click', ()=>{ autoRun = false; status('Idle'); });
+        if(ui.deleteBtn) ui.deleteBtn.addEventListener('click', async ()=>{
+            if(!sessionId) return alert('Start a session first');
+            if(!selected || selected.type!=='circle') return alert('Select a circle (Select/Edit on)');
+            const payload = { session_id: sessionId, actions:[{ type:'DeleteCircle', id: selected.id }], turn_note:'user delete' };
+            const res = await api.applyActions(payload);
+            if(res.error){ alert(res.error); return; }
+            currentState = res.state; selected = null; draw();
+            const hist = await api.getHistory(sessionId); ui.historyBox.textContent = hist.text || '';
+        });
+
+        // init
+        (async()=>{ await loadModels(); draw(); })();
+
+        // Show current variation image in-canvas while iterating
+        async function showCurrentVariation(){
+            const { variation } = await api.varStatus(sessionId);
+            if(!variation || !variation.items || variation.items.length===0) return;
+            const last = variation.items[variation.items.length-1];
+            if(!last.img_url) return;
+            const overlay = ui.variationOverlay; if(!overlay) return;
+            // keep the current overlay visible until the next call replaces it
+            overlay.src = last.img_url; overlay.style.display = 'block';
+        }
+    </script>
+</body>
+</html>
+
+

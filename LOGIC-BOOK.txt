@@ -1,0 +1,80 @@
+Circles App - Logic Book
+
+Purpose
+- This document captures the current logic, rules, and architecture of the Circles application.
+- Keep this file updated as features evolve.
+
+Core Concepts
+- Grid: square grid of size GRID_SIZE x GRID_SIZE (default 50m x 50m).
+- Elements: only circles and optional text labels.
+- IDs: circles are C1, C2, ... in creation order; texts are T1, T2, ...
+- Step: exactly one new circle is added per step. Steps are sequential.
+
+Render System
+- Render mode defaults to "image" and should remain so for production.
+- Circles: drawn as masked textures.
+  - Texture is a square PNG from Circle-Types/<type>.png
+  - The image is resized to the circle’s bounding square (2r x 2r), rotated by rotation_deg (defaulted to angle_deg), then clipped by a circular mask.
+  - Each circle overlay is composited above previously placed circles (later circles render on top).
+- Connectors:
+  - For each tangency (new circle j to anchor i), draw one connector rectangle only for that pair.
+  - Rectangle is centered at tangency, length along the tangent, width across the normal.
+  - Texture (if configured) is a square PNG from Connector-Types/<type>.png, scaled to (length x length), center-cropped to width, rotated to tangent, then clipped to connector polygon. Otherwise, a filled rectangle is drawn.
+
+First Circle
+- Placed automatically at FIRST_CIRCLE_X, FIRST_CIRCLE_Y with radius FIRST_CIRCLE_RADIUS.
+- fill_color FIRST_CIRCLE_FILL.
+- circle_type FIRST_CIRCLE_TYPE; if empty, first available in Circle-Types is used.
+- Counters initialized to C:2, T:1.
+
+Variation Engine (per step)
+- VARIATIONS_PER_STEP controls how many candidates to generate (default 3).
+- For each variation:
+  1) Build messages with Mode: VARIATION (or RETRY) appended to the system prompt.
+  2) Ask the model for exactly one PlaceCircle action with: attach_to_circle, angle_deg, circle_radius (optional), fill_color, circle_type, rotation_deg (optional).
+  3) Apply the candidate to a cloned state to validate geometry; render a preview image; record VariationPreview in History with: index, proposal_actions, applied_preview, note.
+- After N candidates:
+  - Build Mode: CHOICE prompt using only captions (notes) to avoid image context overhead.
+  - Model returns {pick}.
+  - The chosen candidate’s ORIGINAL proposal_actions are applied to real state.
+  - step_index increments; History logs the application; render official session image.
+
+AI Guidance (important)
+- The model must:
+  - Attach the new circle to ANY existing circle (not only the latest) to build larger structures.
+  - Vary angle_deg meaningfully across steps (avoid repeating directions unless warranted).
+  - Vary circle_radius over time (small/medium/large) while respecting grid bounds.
+  - Choose circle_type from available_circle_types on each step and vary for visual interest.
+  - Provide a meaningful turn_note caption summarizing the intent; these are used at choice time.
+
+Validation Rules
+- First circle: absolute placement only.
+- From step 2 onwards: placement requires attach_to_circle and angle_deg.
+- Entire circle must remain within grid; reject out-of-bounds.
+- Duplicate centers forbidden; overlaps allowed otherwise (tangency is ideal but slight overlap visuals are acceptable).
+
+Z-Ordering
+- Circles render in creation order: later circles on top of earlier ones.
+- Connectors are drawn when placing circle j onto anchor i, only for that pair, after circle j is drawn, ensuring proper layering.
+
+Configuration (Circles.py)
+- VARIATIONS_PER_STEP (default 3)
+- AUTO_STEPS_DEFAULT (default 4)
+- FIRST_CIRCLE_X, FIRST_CIRCLE_Y, FIRST_CIRCLE_RADIUS, FIRST_CIRCLE_FILL, FIRST_CIRCLE_TYPE
+- options.render_mode defaults to "image"
+
+Frontend Behavior
+- App auto-starts a session on load.
+- Variations overlay: each preview remains visible on the canvas until replaced by the next.
+- No side panels; auto run and stop are the user’s main controls.
+
+Known Guidelines
+- Use captions for selection to reduce context load.
+- Always store proposal_actions in variations.json so a chosen candidate can be applied faithfully.
+- Keep render_mode in "image" to avoid flicker.
+
+Maintenance
+- When changing placement rules or visual system, update this file to reflect:
+  - Validation rules
+  - Prompt changes (variation/choice modes)
+  - Asset requirements and masking logic

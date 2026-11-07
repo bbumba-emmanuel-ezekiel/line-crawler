@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "Line Crawler"
+abstract: >-
+  An embodied agent navigating and tracing two-dimensional plan environments. Spatial understanding is modelled as traversal rather than as inspection from above.
+type: software
+authors:
+  - family-names: "Bbumba"
+    given-names: "Emmanuel Ezekiel"
+    affiliation: "Spaxzyte Limited"
+repository-code: "https://github.com/bbumba-emmanuel-ezekiel/line-crawler"
+license: MIT
+year: 2026
+keywords:
+  - spatial reasoning
+  - artificial intelligence
+  - computational design
+  - built environment

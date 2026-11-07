@@ -1,0 +1,24 @@
+{
+    "selected_implementation": "google/nano-banana-lite/edit",
+    "default": "google/nano-banana-lite/edit",
+    "models": [
+        {
+            "id": "google/nano-banana-lite/edit",
+            "name": "Gemini 3.1 Flash Lite Image (Nano Banana Lite) [Default]",
+            "provider": "fal.ai",
+            "aspect_ratio": "auto"
+        },
+        {
+            "id": "fal-ai/nano-banana-2/edit",
+            "name": "Gemini 3.1 Flash Image (Nano Banana 2)",
+            "provider": "fal.ai",
+            "aspect_ratio": "auto"
+        },
+        {
+            "id": "fal-ai/nano-banana-pro/edit",
+            "name": "Gemini 3 Pro Image (Nano Banana Pro)",
+            "provider": "fal.ai",
+            "aspect_ratio": "auto"
+        }
+    ]
+}

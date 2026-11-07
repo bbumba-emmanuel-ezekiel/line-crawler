@@ -1,0 +1,12 @@
+{
+  "objective": "Navigate the space and use your abilities to trace out the roads in the background satellite image. You are not to just trace out the path of the road, but you are to trace out the entire road, including the sides.",
+  "grid_size": 55.0,
+  "creature_diameter": 0.6,
+  "history_depth": 3,
+  "_history_schema_documentation": {
+    "step_1": "In the most recent step this is the move you made: ...",
+    "step_2": "In the move before the most recent step this is the move you made: ...",
+    "step_3": "In the move before the move before the most recent step this is the move you made: ...",
+    "step_n": "In the move N steps ago this is the move you made: ..."
+  }
+}

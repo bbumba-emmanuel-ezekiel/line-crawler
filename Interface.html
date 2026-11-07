@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LINE-CRAWLER — Spatial Systems Portal</title>
+    <style>
+        :root {
+            --accent: #3a96dd;
+            --accent-hover: #2980c5;
+            --accent-light: #eef6fc;
+            --bg: #ffffff;
+            --surface: #f8f9fa;
+            --border: #e8eaed;
+            --text: #1a1d20;
+            --text-muted: #5f6368;
+            --radius: 8px;
+            --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        }
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body {
+            height: 100%; font-family: var(--font);
+            background: var(--bg); color: var(--text);
+            display: flex; flex-direction: column; overflow: hidden;
+        }
+
+        .portal-header {
+            height: 52px; background: var(--bg); border-bottom: 1px solid var(--border);
+            display: flex; align-items: center; padding: 0 20px; gap: 16px;
+            flex-shrink: 0; z-index: 1200;
+        }
+        .home-btn {
+            display: inline-flex; align-items: center; gap: 6px; text-decoration: none;
+            color: var(--text-muted); font-size: 0.85rem; font-weight: 500;
+            padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border);
+            background: var(--surface); transition: all 0.15s ease;
+        }
+        .home-btn:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-light); }
+        .portal-title {
+            display: flex; align-items: center; gap: 8px; font-size: 0.95rem;
+            font-weight: 600; letter-spacing: -0.01em; color: var(--text);
+        }
+        .portal-title svg { width: 20px; height: 20px; stroke: var(--accent); stroke-width: 2; fill: none; flex-shrink: 0; }
+        .portal-title span.badge {
+            font-size: 0.72rem; font-weight: 500; text-transform: uppercase;
+            padding: 2px 7px; border-radius: 12px; background: var(--accent-light); color: var(--accent);
+        }
+        .header-status { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 0.82rem; color: var(--text-muted); }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #94a3b8; }
+        .status-dot.active { background: #22c55e; box-shadow: 0 0 0 3px rgba(34,197,94,0.2); animation: pulse-dot 2s infinite; }
+        @keyframes pulse-dot { 0%,100%{opacity:1}50%{opacity:0.5} }
+
+        main { display: flex; flex-grow: 1; overflow: hidden; height: calc(100% - 52px); }
+
+        /* ── Canvas Area ── */
+        #canvas-area {
+            flex-grow: 1; position: relative; background: #f0f3f6;
+            display: flex; align-items: center; justify-content: center; overflow: hidden;
+        }
+        #compositeImg {
+            max-width: 100%; max-height: 100%; object-fit: contain; display: none;
+            image-rendering: auto; border-radius: 2px;
+            box-shadow: 0 2px 16px rgba(0,0,0,0.1); background: #fff;
+        }
+        #uploadZone {
+            display: flex; flex-direction: column; align-items: center; gap: 12px;
+            color: var(--text-muted); font-size: 0.9rem; cursor: pointer;
+            padding: 40px; border: 2px dashed var(--border); border-radius: 12px;
+            background: var(--surface); transition: all 0.2s ease;
+        }
+        #uploadZone:hover, #uploadZone.drag-over {
+            border-color: var(--accent); color: var(--accent); background: var(--accent-light);
+        }
+        #uploadZone svg { width: 48px; height: 48px; stroke: currentColor; stroke-width: 1.5; fill: none; }
+        #uploadZone .hint { font-size: 0.75rem; color: var(--text-muted); }
+        #fileInput { display: none; }
+
+        /* ── Toggle strip ── */
+        .toggle-strip {
+            position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+            display: none; gap: 0; background: rgba(255,255,255,0.95);
+            border: 1px solid var(--border); border-radius: 20px; overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .toggle-strip button {
+            padding: 5px 14px; border: none; background: transparent;
+            font-size: 0.75rem; font-weight: 600; color: var(--text-muted);
+            cursor: pointer; transition: all 0.15s ease;
+        }
+        .toggle-strip button.active { background: var(--accent); color: #fff; }
+
+        /* ── Sidebar ── */
+        #sidebar {
+            width: 360px; flex-shrink: 0; background: #fff;
+            border-left: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden;
+        }
+        .sidebar-top {
+            flex-shrink: 0; padding: 16px 18px; border-bottom: 1px solid var(--border);
+            background: var(--surface); display: flex; flex-direction: column; gap: 12px;
+        }
+        .sidebar-body {
+            flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 16px 18px;
+            display: flex; flex-direction: column; gap: 16px;
+        }
+        .panel-title {
+            font-size: 0.72rem; font-weight: 700;
+            text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted);
+        }
+        select.form-control {
+            width: 100%; padding: 7px 10px; border-radius: 6px; border: 1px solid var(--border);
+            font-size: 0.84rem; background: #fff; color: var(--text); outline: none; cursor: pointer;
+        }
+        select.form-control:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(58,150,221,0.12); }
+        .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+        button.btn {
+            flex: 1 1 auto; padding: 8px 12px; border-radius: 6px;
+            font-size: 0.82rem; font-weight: 600; cursor: pointer;
+            border: 1px solid var(--border); background: var(--surface); color: var(--text);
+            transition: all 0.15s ease; white-space: nowrap;
+        }
+        button.btn:hover { background: var(--accent-light); color: var(--accent); border-color: var(--accent); }
+        button.btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+        button.btn.primary:hover { background: var(--accent-hover); }
+        button.btn.danger { border-color: #fca5a5; color: #b91c1c; }
+        button.btn.danger:hover { background: #fef2f2; }
+        button.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .auto-progress { display: flex; align-items: center; gap: 8px; font-size: 0.8rem; color: var(--text-muted); }
+        .progress-bar-wrap { flex: 1; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
+        .progress-bar { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.3s ease; width: 0%; }
+
+        .info-box {
+            font-size: 0.8rem; line-height: 1.6; color: var(--text-muted);
+            background: var(--surface); border: 1px solid var(--border);
+            border-radius: 6px; padding: 10px 12px;
+        }
+        .info-box.accent-left { border-left: 3px solid var(--accent); }
+
+        #turnNote {
+            font-size: 0.8rem; line-height: 1.6; color: var(--text-muted);
+            background: var(--surface); border: 1px solid var(--border);
+            border-radius: 6px; padding: 10px 12px; max-height: 160px; overflow-y: auto;
+        }
+        #logBox {
+            font-size: 0.76rem; line-height: 1.5; font-family: 'Courier New', monospace;
+            color: var(--text-muted); background: var(--surface);
+            border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;
+            max-height: 200px; overflow-y: auto; white-space: pre-wrap;
+        }
+        .download-row { display: flex; gap: 8px; }
+        .download-btn {
+            flex: 1; display: inline-flex; align-items: center; justify-content: center;
+            gap: 5px; text-decoration: none; padding: 7px 10px; border-radius: 6px;
+            font-size: 0.78rem; font-weight: 600; border: 1px solid var(--border);
+            color: var(--text-muted); background: var(--surface); transition: all 0.15s ease; cursor: pointer;
+        }
+        .download-btn:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-light); }
+        .download-btn svg { width: 13px; height: 13px; stroke: currentColor; stroke-width: 2; fill: none; }
+
+        @media (max-width: 900px) {
+            html, body { overflow: hidden; }
+            main { flex-direction: column; height: calc(100% - 52px); overflow: hidden; }
+            #canvas-area { flex: 0 0 52vh; min-height: 260px; max-height: 54vh; width: 100%; }
+            #sidebar { flex: 1 1 auto; min-height: 0; width: 100%; border-left: none; border-top: 1px solid var(--border); }
+        }
+        @media (max-width: 560px) {
+            .portal-header { padding: 0 12px; gap: 8px; }
+            .portal-title span.badge { display: none; }
+            .sidebar-top, .sidebar-body { padding: 12px 14px; }
+        }
+    </style>
+</head>
+<body>
+
+<header class="portal-header">
+    <a href="/" class="home-btn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+        Hub
+    </a>
+    <div class="portal-title">
+        <svg viewBox="0 0 24 24"><path d="M3 12h4l3-9 4 18 3-9h4"/></svg>
+        <span>LINE-CRAWLER</span>
+        <span class="badge">AI Trace</span>
+    </div>
+    <div class="header-status">
+        <span class="status-dot" id="statusDot"></span>
+        <span id="statusText">Idle · Ready</span>
+    </div>
+</header>
+
+<main>
+    <!-- ── Canvas / Image Area ── -->
+    <div id="canvas-area">
+        <div id="uploadZone">
+            <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <span>Upload a reference image to begin tracing</span>
+            <span class="hint">Click or drag &amp; drop a PNG, JPG, or architectural drawing</span>
+            <input type="file" id="fileInput" accept="image/*">
+        </div>
+        <img id="compositeImg" alt="Composite traced image">
+        <!-- View toggles (shown after image is loaded) -->
+        <div class="toggle-strip" id="toggleStrip">
+            <button class="active" id="btnShowBoth">Both</button>
+            <button id="btnShowOriginal">Original</button>
+            <button id="btnShowLines">Lines Only</button>
+        </div>
+    </div>
+
+    <!-- ── Sidebar ── -->
+    <aside id="sidebar">
+        <div class="sidebar-top">
+            <div class="panel-title">Model</div>
+            <select id="modelSelect" class="form-control"></select>
+
+            <div class="btn-row">
+                <button class="btn" id="btnUpload">Upload Image</button>
+                <button class="btn primary" id="btnStep" disabled>Step</button>
+            </div>
+            <div class="btn-row">
+                <button class="btn" id="btnAuto" disabled>Auto Run</button>
+                <button class="btn danger" id="btnReset" disabled>Reset Trace</button>
+            </div>
+
+            <!-- Auto run progress -->
+            <div class="auto-progress" id="autoProgressRow" style="display:none;">
+                <span id="cycleLabel">0 / 20 cycles</span>
+                <div class="progress-bar-wrap"><div class="progress-bar" id="progressBar"></div></div>
+            </div>
+        </div>
+
+        <div class="sidebar-body">
+            <!-- Description -->
+            <div class="info-box accent-left">
+                <strong>LINE-CRAWLER</strong> — AI traces meaningful lines over your reference image, like a draughtsman would, step by step. Upload any architectural drawing, photo, or plan.
+            </div>
+
+            <!-- Stats -->
+            <div style="display:flex; gap:16px; font-size:0.8rem; color:var(--text-muted);">
+                <span>Step: <strong id="statStep">—</strong></span>
+                <span>Lines: <strong id="statLines">—</strong></span>
+            </div>
+
+            <!-- AI Note -->
+            <div>
+                <div class="panel-title" style="margin-bottom:6px;">AI Trace Note</div>
+                <div id="turnNote">Upload an image and step to see AI tracing notes here.</div>
+            </div>
+
+            <!-- Download -->
+            <div>
+                <div class="panel-title" style="margin-bottom:6px;">Download</div>
+                <div class="download-row">
+                    <button class="download-btn" id="btnDownloadPng" disabled>
+                        <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        PNG
+                    </button>
+                    <button class="download-btn" id="btnDownloadSvg" disabled>
+                        <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        SVG
+                    </button>
+                    <button class="download-btn" id="btnDownloadZip" disabled>
+                        <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        ZIP
+                    </button>
+                </div>
+            </div>
+
+            <!-- Log -->
+            <div>
+                <div class="panel-title" style="margin-bottom:6px;">Activity Log</div>
+                <div id="logBox">Ready. Upload an image to begin.</div>
+            </div>
+        </div>
+    </aside>
+</main>
+
+<script>
+(async () => {
+    const MAX_AUTO = 20;
+    let sessionId = null;
+    let isAutoRunning = false;
+    let autoInterval = null;
+    let cycleCount = 0;
+    let currentModel = '';
+
+    const compositeImg = document.getElementById('compositeImg');
+    const uploadZone = document.getElementById('uploadZone');
+    const fileInput = document.getElementById('fileInput');
+    const modelSelect = document.getElementById('modelSelect');
+    const btnUpload = document.getElementById('btnUpload');
+    const btnStep = document.getElementById('btnStep');
+    const btnAuto = document.getElementById('btnAuto');
+    const btnReset = document.getElementById('btnReset');
+    const btnDownloadPng = document.getElementById('btnDownloadPng');
+    const btnDownloadSvg = document.getElementById('btnDownloadSvg');
+    const btnDownloadZip = document.getElementById('btnDownloadZip');
+    const logBox = document.getElementById('logBox');
+    const turnNote = document.getElementById('turnNote');
+    const statusDot = document.getElementById('statusDot');
+    const statusText = document.getElementById('statusText');
+    const statStep = document.getElementById('statStep');
+    const statLines = document.getElementById('statLines');
+    const autoProgressRow = document.getElementById('autoProgressRow');
+    const cycleLabel = document.getElementById('cycleLabel');
+    const progressBar = document.getElementById('progressBar');
+    const toggleStrip = document.getElementById('toggleStrip');
+    const btnShowBoth = document.getElementById('btnShowBoth');
+    const btnShowOriginal = document.getElementById('btnShowOriginal');
+    const btnShowLines = document.getElementById('btnShowLines');
+
+    // View mode for composite rendering
+    let viewMode = 'both'; // 'both' | 'original' | 'lines'
+
+    function setStatus(active, text) {
+        statusText.textContent = text;
+        statusDot.className = 'status-dot' + (active ? ' active' : '');
+    }
+
+    function log(msg) {
+        logBox.textContent = msg + '\n' + '─'.repeat(36) + '\n' + logBox.textContent;
+    }
+
+    function showComposite(b64) {
+        if (!b64) return;
+        uploadZone.style.display = 'none';
+        compositeImg.style.display = 'block';
+        compositeImg.src = 'data:image/png;base64,' + b64;
+        toggleStrip.style.display = 'flex';
+    }
+
+    function updateProgress() {
+        const pct = (cycleCount / MAX_AUTO) * 100;
+        progressBar.style.width = pct + '%';
+        cycleLabel.textContent = `${cycleCount} / ${MAX_AUTO} cycles`;
+    }
+
+    function handleResponse(data) {
+        if (data.composite_b64) showComposite(data.composite_b64);
+        if (data.note) turnNote.textContent = data.note;
+        statStep.textContent = data.iteration_count ?? '—';
+        statLines.textContent = data.line_count ?? '—';
+        if (data.session_id) sessionId = data.session_id;
+    }
+
+    // ── Load models ─────────────────────────────────────────────────────────
+    try {
+        const res = await fetch('/api/line-crawler/models');
+        const data = await res.json();
+        const models = data.models || [];
+        const def = data.default || '';
+        modelSelect.innerHTML = models.map(m =>
+            `<option value="${m}"${m === def ? ' selected' : ''}>${m}</option>`
+        ).join('');
+        currentModel = modelSelect.value;
+    } catch(e) {
+        modelSelect.innerHTML = '<option value="google/gemini-2.5-flash">google/gemini-2.5-flash</option>';
+    }
+    modelSelect.addEventListener('change', () => { currentModel = modelSelect.value; });
+
+    // ── Start session ────────────────────────────────────────────────────────
+    async function ensureSession() {
+        if (sessionId) return true;
+        try {
+            const res = await fetch('/api/line-crawler/session/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ model: currentModel })
+            });
+            const data = await res.json();
+            sessionId = data.session_id;
+            return true;
+        } catch(e) {
+            log('Error starting session: ' + e.message);
+            return false;
+        }
+    }
+
+    // ── Upload image ──────────────────────────────────────────────────────────
+    async function doUpload(file) {
+        if (!file) return;
+        setStatus(true, 'Uploading image...');
+        await ensureSession();
+
+        const formData = new FormData();
+        formData.append('image', file);
+        formData.append('session_id', sessionId);
+        formData.append('model', currentModel);
+
+        try {
+            const res = await fetch('/api/line-crawler/session/upload', {
+                method: 'POST',
+                body: formData
+            });
+            const data = await res.json();
+            if (data.error) { log('Upload error: ' + data.error); setStatus(false, 'Error'); return; }
+            if (data.session_id) sessionId = data.session_id;
+            handleResponse(data);
+            cycleCount = 0;
+            updateProgress();
+            autoProgressRow.style.display = 'flex';
+            btnStep.disabled = false;
+            btnAuto.disabled = false;
+            btnReset.disabled = false;
+            btnDownloadPng.disabled = false;
+            btnDownloadSvg.disabled = false;
+            btnDownloadZip.disabled = false;
+            log(`✓ Image uploaded: ${file.name}`);
+            setStatus(false, 'Image Ready · Step to trace');
+        } catch(e) {
+            log('Upload error: ' + e.message);
+            setStatus(false, 'Error');
+        }
+    }
+
+    btnUpload.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', (e) => { if (e.target.files[0]) doUpload(e.target.files[0]); });
+
+    // Drag & drop
+    uploadZone.addEventListener('click', () => fileInput.click());
+    uploadZone.addEventListener('dragover', (e) => { e.preventDefault(); uploadZone.classList.add('drag-over'); });
+    uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag-over'));
+    uploadZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        uploadZone.classList.remove('drag-over');
+        const file = e.dataTransfer.files[0];
+        if (file && file.type.startsWith('image/')) doUpload(file);
+    });
+
+    // ── Step ──────────────────────────────────────────────────────────────────
+    async function doStep() {
+        if (!sessionId) return;
+        setStatus(true, `AI tracing step ${(parseInt(statStep.textContent)||0)+1}...`);
+        btnStep.disabled = true;
+        try {
+            const res = await fetch('/api/line-crawler/session/step', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: sessionId, model: currentModel })
+            });
+            const data = await res.json();
+            if (data.error) {
+                log('❌ Error: ' + data.error);
+                stopAuto();
+                return;
+            }
+            handleResponse(data);
+            if (data.actions_applied !== undefined) {
+                log(`✓ Step ${data.iteration_count}: ${data.actions_applied} line actions (${data.line_count} total lines)`);
+            }
+            if (data.action_errors?.length) {
+                log(`⚠ Warnings: ${data.action_errors.join('; ')}`);
+            }
+        } catch (e) {
+            log('Step error: ' + e.message);
+            stopAuto();
+        } finally {
+            if (!isAutoRunning) {
+                btnStep.disabled = false;
+            }
+            setStatus(isAutoRunning, isAutoRunning ? 'Auto Tracing Active' : 'Session Active');
+        }
+    }
+
+    btnStep.addEventListener('click', doStep);
+
+    // ── Auto Run (Capped at MAX_AUTO, turns red Stop button when running) ───────
+    function stopAuto() {
+        if (autoInterval) clearInterval(autoInterval);
+        autoInterval = null;
+        isAutoRunning = false;
+        btnAuto.textContent = 'Auto Run';
+        btnAuto.classList.remove('danger');
+        btnStep.disabled = false;
+        setStatus(false, cycleCount >= MAX_AUTO ? `Complete (${MAX_AUTO} cycles)` : 'Session Active');
+    }
+
+    btnAuto.addEventListener('click', () => {
+        if (isAutoRunning) {
+            stopAuto();
+            return;
+        }
+        if (cycleCount >= MAX_AUTO) {
+            log(`⚠ Auto run limit of ${MAX_AUTO} cycles reached.`);
+            return;
+        }
+        if (!sessionId) {
+            log('Upload an image first.');
+            return;
+        }
+        isAutoRunning = true;
+        btnAuto.textContent = 'Stop Auto';
+        btnAuto.classList.add('danger');
+        btnStep.disabled = true;
+        setStatus(true, 'Auto Tracing Active');
+
+        const tick = async () => {
+            if (!isAutoRunning || !sessionId) return stopAuto();
+            await doStep();
+            cycleCount++;
+            updateProgress();
+            if (cycleCount >= MAX_AUTO) {
+                stopAuto();
+                log(`✅ Auto trace complete: ${MAX_AUTO} cycles.`);
+            }
+        };
+
+        tick();
+        autoInterval = setInterval(tick, 5000);
+    });
+
+    // ── Reset ─────────────────────────────────────────────────────────────────
+    btnReset.addEventListener('click', async () => {
+        stopAuto();
+        if (!sessionId) return;
+        try {
+            const res = await fetch('/api/line-crawler/session/reset', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: sessionId })
+            });
+            const data = await res.json();
+            if (data.composite_b64) showComposite(data.composite_b64);
+            cycleCount = 0;
+            updateProgress();
+            statStep.textContent = '0';
+            statLines.textContent = '0';
+            turnNote.textContent = 'Trace reset. Step to begin tracing again.';
+            log('🔄 Trace reset — original image preserved.');
+            setStatus(false, 'Reset · Ready');
+        } catch(e) { log('Reset error: ' + e.message); }
+    });
+
+    // ── View toggles ──────────────────────────────────────────────────────────
+    [btnShowBoth, btnShowOriginal, btnShowLines].forEach(btn => {
+        btn.addEventListener('click', () => {
+            [btnShowBoth, btnShowOriginal, btnShowLines].forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            // For simplicity, the server renders the composite — we just indicate the mode
+            // for future step calls. Immediately re-request with new mode.
+            log('View mode: ' + btn.textContent);
+        });
+    });
+
+    // ── Downloads ─────────────────────────────────────────────────────────────
+    btnDownloadPng.addEventListener('click', () => {
+        if (!sessionId) return;
+        window.open(`/api/line-crawler/session/composite?session_id=${sessionId}`, '_blank');
+    });
+    btnDownloadSvg.addEventListener('click', () => {
+        if (!sessionId) return;
+        const a = document.createElement('a');
+        a.href = `/api/line-crawler/session/download-svg?session_id=${sessionId}`;
+        a.download = `LineCrawler_${sessionId}.svg`;
+        a.click();
+    });
+    btnDownloadZip.addEventListener('click', () => {
+        if (!sessionId) return;
+        const a = document.createElement('a');
+        a.href = `/api/line-crawler/session/download-zip?session_id=${sessionId}`;
+        a.download = `LineCrawler_${sessionId}.zip`;
+        a.click();
+    });
+
+})();
+</script>
+</body>
+</html>
